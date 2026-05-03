@@ -6,6 +6,7 @@ import {
   MicOff, 
   Loader2, 
   ChevronRight, 
+  ChevronLeft,
   AlertTriangle, 
   CheckCircle2, 
   MapPin,
@@ -25,13 +26,15 @@ import {
   Zap,
   Droplets,
   Building2,
-  Clock
+  Clock,
+  Share2,
+  MessageCircle
 } from "lucide-react";
 import { GoogleGenAI, Type } from "@google/genai";
 import Markdown from "react-markdown";
 
 // Initialize AI
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
 interface AnalysisResult {
   category: string;
@@ -83,6 +86,7 @@ export default function App() {
   const [showUserDetailsModal, setShowUserDetailsModal] = useState(false);
   const [onboardingData, setOnboardingData] = useState({ name: userName || "", phone: userPhone || "", location: "" });
   const [pendingAnalysis, setPendingAnalysis] = useState<string | null>(null);
+  const [queryHistory, setQueryHistory] = useState<string[]>(JSON.parse(localStorage.getItem("help_router_history") || "[]"));
   
   const [isReporting, setIsReporting] = useState(false);
   const [reportFormData, setReportFormData] = useState({ phone: "" });
@@ -100,6 +104,19 @@ export default function App() {
   const [location, setLocation] = useState<{ city: string; state: string } | null>(null);
   const [localDirectory, setLocalDirectory] = useState<LocalDirectory | null>(null);
   const [isFetchingDirectory, setIsFetchingDirectory] = useState(false);
+
+  // Emergency Keywords
+  const isEmergency = (text: string) => {
+    const lower = text.toLowerCase();
+    return lower.includes("fire") || lower.includes("accident") || lower.includes("bleeding") || lower.includes("robbery") || lower.includes("blood");
+  };
+
+  const saveToHistory = (query: string) => {
+    if (!query || query.length < 5) return;
+    const newHistory = [query, ...queryHistory.filter(h => h !== query)].slice(0, 3);
+    setQueryHistory(newHistory);
+    localStorage.setItem("help_router_history", JSON.stringify(newHistory));
+  };
 
   // Chat state
   const [messages, setMessages] = useState<Message[]>([]);
@@ -160,6 +177,7 @@ export default function App() {
 
     setIsFetchingDirectory(true);
     try {
+      if (!ai) throw new Error("AI not initialized");
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: [
@@ -259,8 +277,15 @@ export default function App() {
               model: "gemini-3-flash-preview",
               contents: [{ role: "user", parts: [{ text: `Identify the city and state for these coordinates in India: ${latitude}, ${longitude}. Return ONLY a JSON like {"city": "...", "state": "..."}.` }] }]
             });
-            const data = JSON.parse(response.text || "{}");
-            if (data.city && data.state) {
+        let data;
+        try {
+          data = JSON.parse(response.text || "{}");
+        } catch (parseError) {
+          console.error("JSON parse error in location detection", parseError);
+          data = {};
+        }
+
+        if (data && data.city && data.state) {
               setLocation(data);
               localStorage.setItem("help_router_location", JSON.stringify(data));
               localStorage.setItem("help_router_location_timestamp", Date.now().toString());
@@ -324,6 +349,91 @@ export default function App() {
     const textToAnalyze = customInput || input;
     if (!textToAnalyze.trim()) return;
 
+    saveToHistory(textToAnalyze);
+
+    const getFallbackResult = (text: string): AnalysisResult => {
+      const lower = text.toLowerCase();
+      
+      if (lower.includes('water')) {
+        return {
+          category: "Utilities",
+          subcategory: "Water Supply",
+          urgency: "Normal",
+          authorityName: localDirectory?.utilities.waterBoard.name || "Local Water Supply Board",
+          summary: "Reporting a water supply issue for your area.",
+          steps: [
+            "Check for nearby local pipe bursts.",
+            "Contact the water board helpline with your consumer ID.",
+            "Record the ticket number for follow-up."
+          ],
+          localContact: localDirectory?.utilities.waterBoard.contact || "1916"
+        };
+      }
+      
+      if (lower.includes('garbage') || lower.includes('trash') || lower.includes('waste')) {
+        return {
+          category: "Civic",
+          subcategory: "Waste Management",
+          urgency: "Normal",
+          authorityName: localDirectory?.municipality.officeName || "Municipal Corporation",
+          summary: "Initiating garbage collection or waste management request.",
+          steps: [
+            "Ensure waste is segregated (wet/dry).",
+            "Report the specific street location.",
+            "Use the official city app for priority pickup."
+          ],
+          localContact: localDirectory?.municipality.contact || "101"
+        };
+      }
+
+      if (lower.includes('theft') || lower.includes('police') || lower.includes('crime') || lower.includes('robbery')) {
+        return {
+          category: "Police",
+          subcategory: "Law Enforcement",
+          urgency: "Emergency",
+          authorityName: localDirectory?.police.stationName || "Local Police Department",
+          summary: "Urgent law enforcement assistance requested.",
+          steps: [
+            "Ensure personal safety first.",
+            "Call the emergency number immediately.",
+            "Do not touch any evidence or the crime scene until arrival."
+          ],
+          localContact: localDirectory?.police.emergency || "100"
+        };
+      }
+
+      if (lower.includes('electricity') || lower.includes('power') || lower.includes('current')) {
+        return {
+          category: "Utilities",
+          subcategory: "Power Supply",
+          urgency: "Urgent",
+          authorityName: localDirectory?.utilities.electricityBoard.name || "Electricity Board",
+          summary: "Reporting a power outage or electrical fault.",
+          steps: [
+            "Check your building's main circuit breaker first.",
+            "Identify if it is a neighborhood-wide blackout.",
+            "Contact your regional power distributor with account details."
+          ],
+          localContact: localDirectory?.utilities.electricityBoard.contact || "1912"
+        };
+      }
+
+      // Default Generic Fallback
+      return {
+        category: "General Inquiry",
+        subcategory: "Information",
+        urgency: "Normal",
+        authorityName: "Universal Help Desk",
+        summary: "Providing general guidance for your request.",
+        steps: [
+          "Connect with your local ward office representative.",
+          "Check the official government citizen portal.",
+          "Call the national citizen helpline at 1913."
+        ],
+        localContact: "1913"
+      };
+    };
+
     if (!localStorage.getItem("help_router_user_initialized") && !showUserDetailsModal) {
       setPendingAnalysis(textToAnalyze);
       setShowUserDetailsModal(true);
@@ -334,7 +444,11 @@ export default function App() {
     setError(null);
     setIsChatMode(true);
     
-    // Add user message if not already there
+    if (!ai) {
+      setError("AI service unavailable. Please check your configuration.");
+      setIsLoading(false);
+      return;
+    }
     if (!customInput) {
       const displayLocation = mode === 'someone-else' ? manualLocationInput : (location ? `${location.city}, ${location.state}` : 'Current Location');
       setMessages([{ role: "user", text: `[${displayLocation}] ${textToAnalyze}` }]);
@@ -384,7 +498,22 @@ export default function App() {
         }
       });
 
-      const data = JSON.parse(classificationResponse.text || "{}");
+      let data;
+      try {
+        data = JSON.parse(classificationResponse.text || "{}");
+      } catch (parseError) {
+        console.error("Analysis JSON parse error", parseError);
+        throw new Error("Could not understand AI response format.");
+      }
+      
+      if (!data || !data.summary) {
+        throw new Error("AI returned incomplete analysis.");
+      }
+
+      if (mode === 'someone-else') {
+        fetchLocalDirectory(manualLocationInput);
+      }
+
       setResult(data);
 
       chatRef.current = ai.chats.create({
@@ -404,11 +533,26 @@ export default function App() {
       const greeting = userName ? `Hello ${userName} 👋. ` : "";
       setMessages(prev => [...prev, { role: "model", text: greeting + data.summary }]);
     } catch (err: any) {
-      console.error(err);
-      if (err.message?.includes("429") || err.message?.includes("quota")) {
-        setError("Our system is currently at peak capacity. Please wait a minute and try again.");
-      } else {
-        setError("Failed to route request. Please check your connection or try a direct keyword like 'Garbage'.");
+      console.error("AI Routing failed, using fallback:", err);
+      
+      const fallbackData = getFallbackResult(textToAnalyze);
+      setResult(fallbackData);
+      
+      const fallbackGreeting = userName ? `Hello ${userName} 👋. ` : "";
+      const fallbackMessage = "I'm having trouble connecting to my primary engine, but I've identified your issue as " + 
+                              fallbackData.category + ". Here are your local routing details:";
+      
+      setMessages(prev => [...prev, { role: "model", text: fallbackGreeting + fallbackMessage }]);
+      
+      // Attempt to initialize a fallback chat if possible, or just let users ask direct questions
+      if (ai) {
+        chatRef.current = ai.chats.create({
+          model: "gemini-3-flash-preview",
+          config: {
+            systemInstruction: `You are the Smart Local Help Router AI (Fallback Mode). 
+            Help the user with their ${fallbackData.category} issue in ${location?.city || 'India'}.`
+          }
+        });
       }
     } finally {
       setIsLoading(false);
@@ -449,15 +593,6 @@ export default function App() {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const handleLogin = (isGuest: boolean) => {
-    if (!isGuest && nameInput.trim()) {
-      localStorage.setItem("help_router_user", nameInput.trim());
-      setUserName(nameInput.trim());
-    }
-    localStorage.setItem("help_router_user_initialized", "true");
-    setIsNewUser(false);
   };
 
   const handleReportSubmit = () => {
@@ -582,7 +717,11 @@ export default function App() {
               <div className="flex items-center gap-1.5 mt-1">
                 <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
                 <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                  {userName ? `Hello, ${userName}` : (location ? `${location.city}, ${location.state}` : 'Locating...')}
+                  {userName 
+                    ? `Hello, ${userName}` 
+                    : (mode === 'someone-else' && manualLocationInput 
+                        ? `Helping in: ${manualLocationInput}` 
+                        : (location ? `${location.city}, ${location.state}` : 'Locating...'))}
                 </span>
               </div>
             </div>
@@ -645,7 +784,7 @@ export default function App() {
                         ? 'bg-slate-900 text-white rounded-tr-none' 
                         : 'bg-slate-50 text-slate-900 rounded-tl-none border border-slate-100'
                     }`}>
-                      <Markdown>{msg.text}</Markdown>
+                      <Markdown>{msg.text || ""}</Markdown>
                     </div>
                   </motion.div>
                 ))}
@@ -693,53 +832,131 @@ export default function App() {
                     animate={{ opacity: 1, y: 0 }}
                     className="space-y-8 pt-4 pb-12"
                   >
+                    {/* Emergency Alert Card */}
+                    {isEmergency(messages[0]?.text || "") && (
+                      <motion.div 
+                        initial={{ scale: 0.9, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        className="p-8 bg-red-600 text-white rounded-[3rem] shadow-2xl shadow-red-200 border-4 border-red-500 flex flex-col items-center text-center gap-6"
+                      >
+                        <div className="w-20 h-20 bg-white/20 rounded-full flex items-center justify-center animate-pulse">
+                          <AlertTriangle size={40} />
+                        </div>
+                        <div className="space-y-2">
+                          <h3 className="text-3xl font-black uppercase tracking-tighter leading-none">⚠️ Emergency Recovery</h3>
+                          <p className="text-sm font-bold opacity-90 uppercase tracking-widest">Call emergency numbers first, then route.</p>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3 w-full">
+                          <a href="tel:100" className="flex flex-col items-center py-4 bg-white text-red-600 rounded-2xl font-black text-[10px] uppercase tracking-widest border border-white">Police 100</a>
+                          <a href="tel:108" className="flex flex-col items-center py-4 bg-white text-red-600 rounded-2xl font-black text-[10px] uppercase tracking-widest border border-white">Amb 108</a>
+                          <a href="tel:101" className="flex flex-col items-center py-4 bg-white text-red-600 rounded-2xl font-black text-[10px] uppercase tracking-widest border border-white">Fire 101</a>
+                        </div>
+                      </motion.div>
+                    )}
+
                     {/* Routing Cards Section */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       {/* Urgency Card */}
-                      <div className={`p-8 rounded-[3rem] border border-transparent shadow-xl ${
-                        result.urgency === 'Emergency' ? 'bg-red-600 text-white' : 'bg-slate-900 text-white'
+                      <div className={`p-8 rounded-[3rem] border border-transparent shadow-xl flex flex-col justify-between ${
+                        result.urgency === 'Emergency' ? 'bg-red-600 text-white shadow-red-100' : 'bg-slate-900 text-white shadow-slate-200'
                       }`}>
-                        <div className="flex items-center justify-between mb-6">
-                          <span className="text-[10px] font-black uppercase tracking-[0.3em] opacity-80">{result.urgency} Action Needed</span>
-                          <AlertTriangle size={24} className="opacity-80" />
+                        <div className="space-y-6">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-black uppercase tracking-[0.3em] opacity-80">{result.urgency} Action Required</span>
+                            <Shield size={24} className="opacity-80" />
+                          </div>
+                          <h4 className="text-4xl font-black tracking-tighter leading-none uppercase">{result.authorityName}</h4>
                         </div>
-                        <h4 className="text-3xl font-black tracking-tighter leading-none uppercase mb-6">{result.authorityName}</h4>
-                        <a href={`tel:${result.localContact || '100'}`} className="w-full py-5 bg-white text-slate-900 rounded-[2rem] font-black text-xs uppercase tracking-[0.4em] flex items-center justify-center gap-3 shadow-2xl hover:scale-[1.02] transition-transform">
-                          <Phone size={18} /> Call Helpline
-                        </a>
+                        <div className="mt-8">
+                             <a href={`tel:${result.localContact || '100'}`} className="w-full py-6 bg-white text-slate-900 rounded-[2rem] font-black text-xs uppercase tracking-[0.4em] flex items-center justify-center gap-3 shadow-2xl hover:scale-[1.02] transition-transform">
+                              <Phone size={18} /> Call Department
+                            </a>
+                        </div>
                       </div>
 
-                      {/* Map & Report Actions */}
-                      <div className="bg-slate-50 p-8 rounded-[3rem] border border-slate-100 flex flex-col gap-4">
+                      {/* Unified Action Grid */}
+                      <div className="bg-white p-8 rounded-[3rem] border border-slate-100 grid grid-cols-2 gap-4 shadow-sm">
                         <a 
-                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(result.authorityName + ' ' + (location?.city || 'India'))}`}
+                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(result.authorityName + ' ' + (mode === 'someone-else' ? manualLocationInput : (location?.city || 'India')))}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="w-full p-6 bg-white border border-slate-100 text-blue-600 rounded-[2rem] text-xs font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-blue-50 transition-colors shadow-sm"
+                          className="flex flex-col items-center justify-center gap-3 p-6 bg-slate-50 text-blue-600 rounded-[2.5rem] border border-slate-100 hover:bg-blue-50 transition-all group"
                         >
-                          <MapPin size={20} /> Open in Maps
+                          <MapPin size={24} className="group-hover:scale-110 transition-transform" />
+                          <span className="text-[9px] font-black uppercase tracking-widest">Maps</span>
                         </a>
                         <button 
                           onClick={() => setIsReporting(true)}
-                          className="w-full p-6 bg-slate-900 text-white rounded-[2rem] text-xs font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-blue-600 transition-colors shadow-xl"
+                          className="flex flex-col items-center justify-center gap-3 p-6 bg-slate-50 text-slate-600 rounded-[2.5rem] border border-slate-100 hover:bg-slate-100 transition-all group"
                         >
-                          <Building2 size={20} /> Report Issue
+                          <Building2 size={24} className="group-hover:scale-110 transition-transform" />
+                          <span className="text-[9px] font-black uppercase tracking-widest">Report</span>
                         </button>
+                        <button 
+                          onClick={() => {
+                            const summary = `${result.summary}\n\n📍 Department: ${result.authorityName}\n📞 Helpline: ${result.localContact}\n\nShared via The Advocate Router`;
+                            if (navigator.share) {
+                                navigator.share({ title: 'Local Router Update', text: summary });
+                            } else {
+                                navigator.clipboard.writeText(summary);
+                                alert("Routing info copied to clipboard!");
+                            }
+                          }}
+                          className="flex flex-col items-center justify-center gap-3 p-6 bg-slate-50 text-indigo-600 rounded-[2.5rem] border border-slate-100 hover:bg-indigo-50 transition-all group"
+                        >
+                          <Share2 size={24} className="group-hover:scale-110 transition-transform" />
+                          <span className="text-[9px] font-black uppercase tracking-widest">Share</span>
+                        </button>
+                        <a 
+                          href={`https://wa.me/?text=${encodeURIComponent(`${result.summary}\n\n📍 Authority: ${result.authorityName}\n📞 Contact: ${result.localContact}`)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex flex-col items-center justify-center gap-3 p-6 bg-slate-50 text-emerald-500 rounded-[2.5rem] border border-slate-100 hover:bg-emerald-50 transition-all group"
+                        >
+                          <MessageCircle size={24} className="group-hover:scale-110 transition-transform" />
+                          <span className="text-[9px] font-black uppercase tracking-widest">WhatsApp</span>
+                        </a>
                       </div>
                     </div>
 
-                    {/* Steps Section */}
-                    <div className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-sm space-y-8">
-                       <h5 className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-300">Procedure to Follow</h5>
+                    {/* Steps Section & Trust Message */}
+                    <div className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-sm space-y-10">
                        <div className="space-y-6">
-                         {result.steps.map((step, idx) => (
-                           <div key={idx} className="flex gap-6 group">
-                             <span className="flex-shrink-0 w-8 h-8 rounded-2xl bg-slate-50 text-slate-900 flex items-center justify-center font-black text-[10px] group-hover:bg-slate-900 group-hover:text-white transition-colors">
-                               {idx + 1}
-                             </span>
-                             <p className="text-slate-600 font-bold leading-relaxed pt-1">{step}</p>
-                           </div>
-                         ))}
+                          <h5 className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-300">Action Plan</h5>
+                          <div className="space-y-6">
+                            {result.steps.map((step, idx) => (
+                              <div key={idx} className="flex gap-6 group">
+                                <span className="flex-shrink-0 w-8 h-8 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-black text-[10px] shadow-lg">
+                                  {idx + 1}
+                                </span>
+                                <p className="text-slate-600 font-bold leading-relaxed pt-1">{step}</p>
+                              </div>
+                            ))}
+                          </div>
+                       </div>
+
+                       {/* Context Suggestions */}
+                       <div className="pt-8 border-t border-slate-50 space-y-6">
+                          <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">You might also need:</p>
+                          <div className="flex flex-wrap gap-2">
+                             {result.category.toLowerCase().includes('water') && (
+                               <button className="px-5 py-2.5 bg-blue-50 text-blue-600 rounded-full text-[10px] font-black uppercase border border-blue-100 hover:bg-blue-100 flex items-center gap-2 transition-all">Check Supply Schedule <ArrowRight size={12}/></button>
+                             )}
+                             {result.category.toLowerCase().includes('police') && (
+                               <button className="px-5 py-2.5 bg-indigo-50 text-indigo-600 rounded-full text-[10px] font-black uppercase border border-indigo-100 hover:bg-indigo-100 flex items-center gap-2 transition-all">File FIR Online <ArrowRight size={12}/></button>
+                             )}
+                             {result.category.toLowerCase().includes('document') && (
+                               <button className="px-5 py-2.5 bg-amber-50 text-amber-600 rounded-full text-[10px] font-black uppercase border border-amber-100 hover:bg-amber-100 flex items-center gap-2 transition-all">Download Copy <ArrowRight size={12}/></button>
+                             )}
+                             <button className="px-5 py-2.5 bg-slate-50 text-slate-500 rounded-full text-[10px] font-black uppercase border border-slate-100 hover:bg-slate-100 flex items-center gap-2 transition-all">Nearby Ward Office <ArrowRight size={12}/></button>
+                          </div>
+                       </div>
+
+                       <div className="pt-6 border-t border-slate-50 text-center">
+                          <div className="inline-flex items-center gap-3 px-4 py-2 bg-green-50 text-green-600 rounded-xl text-[10px] font-black uppercase tracking-widest border border-green-100">
+                             <CheckCircle2 size={14} /> 
+                             Based on your problem and location, this is the correct department.
+                          </div>
                        </div>
                     </div>
                   </motion.div>
@@ -802,20 +1019,31 @@ export default function App() {
                 {/* User Info / Profile Section */}
                 {userName && (
                   <div className="flex justify-center -mt-4 mb-8">
-                    <button 
-                      onClick={() => setShowUserDetailsModal(true)}
-                      className="group flex items-center gap-3 px-6 py-3 bg-white/50 backdrop-blur-md rounded-2xl border border-slate-100 hover:border-blue-200 transition-all shadow-sm active:scale-95"
-                    >
-                      <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center font-black text-xs uppercase">
-                        {userName.charAt(0)}
+                    <div className="flex flex-col items-center gap-3">
+                      <button 
+                        onClick={() => setShowUserDetailsModal(true)}
+                        className="group flex items-center gap-3 px-6 py-3 bg-white/50 backdrop-blur-md rounded-2xl border border-slate-100 hover:border-blue-200 transition-all shadow-sm active:scale-95"
+                      >
+                        <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center font-black text-xs uppercase">
+                          {userName.charAt(0)}
+                        </div>
+                        <div className="text-left">
+                          <p className="text-[8px] font-black uppercase tracking-widest text-slate-400 leading-none mb-1">Authenticated</p>
+                          <p className="text-[10px] font-black text-slate-900 uppercase tracking-tight flex items-center gap-1">
+                            {userName} <RefreshCcw size={10} className="text-slate-300 group-hover:rotate-180 transition-transform duration-700" />
+                          </p>
+                        </div>
+                      </button>
+                      
+                      <div className="flex items-center gap-2 px-4 py-1.5 bg-slate-900/5 text-slate-500 rounded-full border border-slate-200/50">
+                        <div className={`w-1.5 h-1.5 rounded-full ${mode === 'my-location' ? 'bg-blue-500' : 'bg-amber-500'} animate-pulse`} />
+                        <span className="text-[9px] font-black uppercase tracking-widest">
+                          {mode === 'my-location' 
+                            ? `📍 Your Location: ${location?.city || 'Detecting...'}` 
+                            : `🌍 Helping in: ${manualLocationInput || 'Select Location'}`}
+                        </span>
                       </div>
-                      <div className="text-left">
-                        <p className="text-[8px] font-black uppercase tracking-widest text-slate-400 leading-none mb-1">Authenticated</p>
-                        <p className="text-[10px] font-black text-slate-900 uppercase tracking-tight flex items-center gap-1">
-                          {userName} <RefreshCcw size={10} className="text-slate-300 group-hover:rotate-180 transition-transform duration-700" />
-                        </p>
-                      </div>
-                    </button>
+                    </div>
                   </div>
                 )}
 
@@ -878,6 +1106,25 @@ export default function App() {
                     </button>
                   ))}
                 </div>
+
+                {/* History Section */}
+                {queryHistory.length > 0 && (
+                  <div className="w-full max-w-4xl mx-auto mt-12 space-y-4">
+                    <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-300 text-center">Recent Searches</p>
+                    <div className="flex flex-wrap justify-center gap-3">
+                       {queryHistory.map((query, i) => (
+                        <button 
+                          key={i}
+                          onClick={() => { setInput(query); handleAnalyze(query); }}
+                          className="px-6 py-3 bg-white border border-slate-100 rounded-2xl text-[10px] font-bold text-slate-400 hover:text-slate-900 hover:border-blue-200 transition-all shadow-sm flex items-center gap-2 group"
+                        >
+                          <Clock size={12} className="group-hover:text-blue-500" />
+                          {query}
+                        </button>
+                       ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Main Input Card - Now more compact as it will be duplicated at bottom */}

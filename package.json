@@ -8,7 +8,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "astra:start": "npx @mdayan896/astra-cli start --team KUHVRZ",
+    "astra:mcp": "npx @mdayan896/astrix-sdk-mcp"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
