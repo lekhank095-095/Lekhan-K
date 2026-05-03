@@ -1,0 +1,51 @@
+{
+  "categories": {
+    "Civic": {
+      "authority": "Municipality / Local Body",
+      "website": "https://pgrs.delhigovt.nic.in/",
+      "color": "blue"
+    },
+    "Police": {
+      "authority": "Local Police Station",
+      "website": "https://www.delhipolice.nic.in/",
+      "color": "red"
+    },
+    "Healthcare": {
+      "authority": "Health Department / Public Hospital",
+      "website": "https://health.delhigovt.nic.in/",
+      "color": "green"
+    },
+    "Documents": {
+      "authority": "UIDAI / RTO / Local Administration",
+      "website": "https://uidai.gov.in/",
+      "color": "amber"
+    },
+    "Utilities": {
+      "authority": "Water Board / Electricity Department",
+      "website": "https://delhijalboard.nic.in/",
+      "color": "cyan"
+    },
+    "Cybercrime": {
+      "authority": "National Cyber Crime Reporting Portal",
+      "website": "https://cybercrime.gov.in/",
+      "color": "purple"
+    }
+  },
+  "urgency": {
+    "Emergency": {
+      "label": "Emergency",
+      "color": "critical",
+      "action": "Immediate Action Required. Call 112 / 100 / 108"
+    },
+    "Medium": {
+      "label": "High Priority",
+      "color": "warning",
+      "action": "Action recommended within 24-48 hours"
+    },
+    "Low": {
+      "label": "Routine",
+      "color": "info",
+      "action": "Standard processing time applies (3-7 days)"
+    }
+  }
+}

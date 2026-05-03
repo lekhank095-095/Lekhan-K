@@ -1,0 +1,6 @@
+{
+  "name": "Local Help Request Router",
+  "description": "AI-powered routing for local help requests and civic issues.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": []
+}
